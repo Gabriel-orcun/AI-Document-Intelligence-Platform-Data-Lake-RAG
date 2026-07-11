@@ -1,0 +1,13 @@
+# Pinned <2: the base apache/airflow image ships pandas built against numpy 1.x;
+# letting pip pull numpy 2.x here (via scikit-learn/sentence-transformers) breaks
+# pandas' compiled extensions at import time ("numpy.dtype size changed").
+numpy<2
+requests
+boto3
+tqdm
+pillow
+beautifulsoup4
+lxml
+qdrant-client
+sentence-transformers
+easyocr

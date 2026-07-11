@@ -1,0 +1,37 @@
+[project]
+name = "ai-document-intelligence"
+version = "0.1.0"
+description = "Project"
+readme = "README.md"
+requires-python = ">=3.10"
+
+dependencies = [
+    "pandas>=2.0",
+    "scikit-learn>=1.3",
+    "numpy>=1.24",
+    "numba",
+    "boto3",
+    "transformers",
+    "datasets",
+    "huggingface-hub",
+    "pyarrow",
+    "fastapi",
+    "uvicorn",
+    "pillow",
+    "tqdm",
+    "beautifulsoup4",
+    "lxml",
+    "easyocr",
+    "sentence-transformers",
+    "qdrant-client"
+]
+
+[dependency-groups]
+dev = [
+    "jupyter",
+    "notebook",
+    "matplotlib",
+    "seaborn",
+    "dvc",
+    "dvc-s3"
+]
