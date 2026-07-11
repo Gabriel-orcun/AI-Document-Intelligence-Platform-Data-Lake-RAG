@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import json
+import sys
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -14,6 +15,10 @@ from botocore.exceptions import ClientError
 from qdrant_client import QdrantClient
 from qdrant_client.http import models as qmodels
 from tqdm import tqdm
+
+# Makes "scripts" importable whether this file is run directly
+# (python scripts/staging_to_curated.py) or imported as a package submodule.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from scripts.s3_metadata import merge_and_write_metadata
 

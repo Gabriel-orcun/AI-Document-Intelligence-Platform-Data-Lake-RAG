@@ -1,5 +1,6 @@
 """Validates raw documents and copies them into the staging bucket."""
 
+import sys
 import boto3
 import hashlib
 import argparse
@@ -7,6 +8,10 @@ from io import BytesIO
 from pathlib import Path
 from PIL import Image
 from tqdm import tqdm
+
+# Makes "scripts" importable whether this file is run directly
+# (python scripts/raw_to_staging.py) or imported as a package submodule.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from scripts.s3_metadata import merge_and_write_metadata
 
