@@ -1,3 +1,5 @@
+"""One-shot financial document dataset ingestion, staging, and curation DAG."""
+
 import os
 import sys
 from datetime import datetime
@@ -19,7 +21,13 @@ CURATED_LIMIT = int(_raw_limit) if _raw_limit else None
 
 
 def s3_client():
+    """Create an S3 client from the S3_ENDPOINT_URL env var.
+
+    Args: none.
+    Returns: boto3 S3 client.
+    """
     import boto3
+
     return boto3.client("s3", endpoint_url=os.environ["S3_ENDPOINT_URL"])
 
 
@@ -29,15 +37,27 @@ def s3_client():
     schedule=None,
     start_date=datetime(2026, 1, 1),
     catchup=False,
-    tags=["ingestion", "financial", "rag"]
+    tags=["ingestion", "financial", "rag"],
 )
 def financial_bootstrap_pipeline():
+    """DAG: split and upload the financial dataset, then stage and curate it.
+
+    Args: none.
+    Returns: none, defines the task graph.
+    """
 
     @task
     def split_and_upload():
+        """Split the financial images into train/val/test and upload them to raw.
+
+        Args: none, reads FINANCIAL_SOURCE_DIR / FINANCIAL_SPLIT_DIR env vars.
+        Returns: dict with the task status.
+        """
         from scripts.ingestion.upload import split_dataset, upload_s3
 
-        source_dir = os.environ.get("FINANCIAL_SOURCE_DIR", "/opt/airflow/repo/data/financial/images")
+        source_dir = os.environ.get(
+            "FINANCIAL_SOURCE_DIR", "/opt/airflow/repo/data/financial/images"
+        )
         output_dir = os.environ.get("FINANCIAL_SPLIT_DIR", "/tmp/financial_split")
 
         split_dataset(source_dir=source_dir, output_dir=output_dir)
@@ -46,28 +66,45 @@ def financial_bootstrap_pipeline():
             local_dir=output_dir,
             bucket=os.environ.get("RAW_BUCKET", "raw"),
             prefix="financial",
-            endpoint=os.environ["S3_ENDPOINT_URL"]
+            endpoint=os.environ["S3_ENDPOINT_URL"],
         )
 
         return {"status": "uploaded"}
 
     @task
     def raw_to_staging(_previous):
+        """Validate and stage the uploaded financial images.
+
+        Args: previous task's return value (used only to order the tasks).
+        Returns: dict with the task status.
+        """
         from scripts.raw_to_staging import process_financial
 
         s3 = s3_client()
-        process_financial(s3, os.environ.get("RAW_BUCKET", "raw"), os.environ.get("STAGING_BUCKET", "staging"))
+        process_financial(
+            s3,
+            os.environ.get("RAW_BUCKET", "raw"),
+            os.environ.get("STAGING_BUCKET", "staging"),
+        )
 
         return {"status": "staged"}
 
     @task
     def staging_to_curated(_previous):
+        """OCR, chunk, embed, and index the staged financial images.
+
+        Args: previous task's return value (used only to order the tasks).
+        Returns: dict with the number of curated documents.
+        """
         from qdrant_client import QdrantClient
         from sentence_transformers import SentenceTransformer
         import easyocr
 
         from scripts.staging_to_curated import (
-            EMBEDDING_MODEL_NAME, ensure_bucket, ensure_collection, process_financial_curated
+            EMBEDDING_MODEL_NAME,
+            ensure_bucket,
+            ensure_collection,
+            process_financial_curated,
         )
 
         s3 = s3_client()
@@ -88,7 +125,7 @@ def financial_bootstrap_pipeline():
             embedder,
             ocr_reader,
             limit=CURATED_LIMIT,
-            workers=3
+            workers=3,
         )
 
         return {"curated_count": len(metadata)}

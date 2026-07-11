@@ -1,3 +1,5 @@
+"""Turns staged SEC filings and financial images into chunked, embedded, curated data."""
+
 import argparse
 import hashlib
 import json
@@ -27,12 +29,22 @@ _thread_local = threading.local()
 
 
 def get_thread_s3(endpoint_url):
+    """Get or create the S3 client for the current thread.
+
+    Args: S3 endpoint URL.
+    Returns: boto3 S3 client, one per thread.
+    """
     if not hasattr(_thread_local, "s3"):
         _thread_local.s3 = boto3.client("s3", endpoint_url=endpoint_url)
     return _thread_local.s3
 
 
 def ensure_bucket(s3, bucket):
+    """Create the bucket if it doesn't exist yet.
+
+    Args: s3 client, bucket name.
+    Returns: none.
+    """
     try:
         s3.head_bucket(Bucket=bucket)
     except ClientError:
@@ -40,17 +52,26 @@ def ensure_bucket(s3, bucket):
 
 
 def ensure_collection(qdrant, name):
+    """Create the Qdrant collection if it doesn't exist yet.
+
+    Args: Qdrant client, collection name.
+    Returns: none.
+    """
     if not qdrant.collection_exists(name):
         qdrant.create_collection(
             collection_name=name,
             vectors_config=qmodels.VectorParams(
-                size=EMBEDDING_DIM,
-                distance=qmodels.Distance.COSINE
-            )
+                size=EMBEDDING_DIM, distance=qmodels.Distance.COSINE
+            ),
         )
 
 
 def list_s3_files(s3, bucket, prefix):
+    """List every object key under a prefix, metadata.json excluded.
+
+    Args: s3 client, bucket name, key prefix.
+    Returns: list of object keys.
+    """
     files = []
 
     paginator = s3.get_paginator("list_objects_v2")
@@ -65,6 +86,11 @@ def list_s3_files(s3, bucket, prefix):
 
 
 def chunk_text(text, chunk_size=CHUNK_SIZE, overlap=CHUNK_OVERLAP):
+    """Split text into overlapping chunks for embedding.
+
+    Args: text, chunk size in characters, overlap in characters.
+    Returns: list of text chunks.
+    """
     text = text.strip()
 
     if not text:
@@ -90,6 +116,11 @@ def chunk_text(text, chunk_size=CHUNK_SIZE, overlap=CHUNK_OVERLAP):
 
 
 def extract_text_from_html(html_bytes):
+    """Strip an HTML filing down to clean plain text.
+
+    Args: raw HTML bytes.
+    Returns: plain text string.
+    """
     soup = BeautifulSoup(html_bytes, "lxml")
 
     for tag in soup(["script", "style", "head", "noscript"]):
@@ -102,10 +133,20 @@ def extract_text_from_html(html_bytes):
 
 
 def point_id(document_id, chunk_index):
+    """Build a deterministic Qdrant point id for a chunk.
+
+    Args: document id, chunk index.
+    Returns: uuid string, stable across reruns of the same chunk.
+    """
     return str(uuid.uuid5(NAMESPACE, f"{document_id}:{chunk_index}"))
 
 
 def upsert_chunks(qdrant, collection, embedder, document_id, chunks, base_payload):
+    """Embed chunks and upsert them into a Qdrant collection.
+
+    Args: Qdrant client, collection name, embedder, document id, text chunks, shared payload fields.
+    Returns: number of points written.
+    """
     if not chunks:
         return 0
 
@@ -120,9 +161,7 @@ def upsert_chunks(qdrant, collection, embedder, document_id, chunks, base_payloa
 
         points.append(
             qmodels.PointStruct(
-                id=point_id(document_id, i),
-                vector=vector,
-                payload=payload
+                id=point_id(document_id, i), vector=vector, payload=payload
             )
         )
 
@@ -131,7 +170,14 @@ def upsert_chunks(qdrant, collection, embedder, document_id, chunks, base_payloa
     return len(points)
 
 
-def _process_sec_file(file, endpoint_url, staging_bucket, curated_bucket, qdrant, embedder):
+def _process_sec_file(
+    file, endpoint_url, staging_bucket, curated_bucket, qdrant, embedder
+):
+    """Curate one SEC filing: parse, chunk, embed, write to S3 and Qdrant.
+
+    Args: staging key, S3 endpoint URL, staging bucket, curated bucket, Qdrant client, embedder.
+    Returns: metadata dict describing the outcome for this file.
+    """
     s3 = get_thread_s3(endpoint_url)
 
     entry = {"file": file}
@@ -149,10 +195,7 @@ def _process_sec_file(file, endpoint_url, staging_bucket, curated_bucket, qdrant
         text = extract_text_from_html(content)
 
         if not text:
-            entry.update({
-                "document_id": document_id,
-                "status": "empty_text"
-            })
+            entry.update({"document_id": document_id, "status": "empty_text"})
             return entry
 
         chunks = chunk_text(text)
@@ -162,7 +205,7 @@ def _process_sec_file(file, endpoint_url, staging_bucket, curated_bucket, qdrant
             "document_id": document_id,
             "ticker": ticker,
             "filing_date": filing_date,
-            "file": file
+            "file": file,
         }
 
         n_chunks = upsert_chunks(
@@ -174,38 +217,56 @@ def _process_sec_file(file, endpoint_url, staging_bucket, curated_bucket, qdrant
         s3.put_object(
             Bucket=curated_bucket,
             Key=destination,
-            Body=json.dumps({
+            Body=json.dumps(
+                {
+                    "document_id": document_id,
+                    "ticker": ticker,
+                    "filing_date": filing_date,
+                    "source_file": file,
+                    "text": text,
+                    "chunk_count": n_chunks,
+                },
+                indent=2,
+            ).encode("utf-8"),
+        )
+
+        entry.update(
+            {
                 "document_id": document_id,
                 "ticker": ticker,
                 "filing_date": filing_date,
-                "source_file": file,
-                "text": text,
-                "chunk_count": n_chunks
-            }, indent=2).encode("utf-8")
+                "curated_path": destination,
+                "chunk_count": n_chunks,
+                "status": "curated",
+            }
         )
 
-        entry.update({
-            "document_id": document_id,
-            "ticker": ticker,
-            "filing_date": filing_date,
-            "curated_path": destination,
-            "chunk_count": n_chunks,
-            "status": "curated"
-        })
-
     except Exception as exc:
-        entry.update({
-            "status": "error",
-            "error": str(exc)
-        })
+        entry.update({"status": "error", "error": str(exc)})
 
     return entry
 
 
-def process_sec_curated(endpoint_url, staging_bucket, curated_bucket, qdrant, embedder, limit=None, workers=DEFAULT_WORKERS, keys=None):
+def process_sec_curated(
+    endpoint_url,
+    staging_bucket,
+    curated_bucket,
+    qdrant,
+    embedder,
+    limit=None,
+    workers=DEFAULT_WORKERS,
+    keys=None,
+):
+    """Curate SEC filings from staging, in parallel across threads.
+
+    Args: S3 endpoint URL, staging bucket, curated bucket, Qdrant client, embedder, max files, thread count, explicit key list.
+    Returns: list of metadata entries, one per processed file.
+    """
     s3 = get_thread_s3(endpoint_url)
 
-    files = keys if keys is not None else list_s3_files(s3, staging_bucket, "sec_edgar/")
+    files = (
+        keys if keys is not None else list_s3_files(s3, staging_bucket, "sec_edgar/")
+    )
 
     if limit is not None:
         files = files[:limit]
@@ -215,20 +276,44 @@ def process_sec_curated(endpoint_url, staging_bucket, curated_bucket, qdrant, em
     with ThreadPoolExecutor(max_workers=workers) as executor:
         futures = [
             executor.submit(
-                _process_sec_file, file, endpoint_url, staging_bucket, curated_bucket, qdrant, embedder
+                _process_sec_file,
+                file,
+                endpoint_url,
+                staging_bucket,
+                curated_bucket,
+                qdrant,
+                embedder,
             )
             for file in files
         ]
 
-        for future in tqdm(as_completed(futures), total=len(futures), desc="SEC EDGAR curated"):
+        for future in tqdm(
+            as_completed(futures), total=len(futures), desc="SEC EDGAR curated"
+        ):
             metadata.append(future.result())
 
-    merge_and_write_metadata(s3, curated_bucket, "sec_edgar/metadata.json", metadata, id_field="file")
+    merge_and_write_metadata(
+        s3, curated_bucket, "sec_edgar/metadata.json", metadata, id_field="file"
+    )
 
     return metadata
 
 
-def _process_financial_file(file, split, endpoint_url, staging_bucket, curated_bucket, qdrant, embedder, ocr_reader):
+def _process_financial_file(
+    file,
+    split,
+    endpoint_url,
+    staging_bucket,
+    curated_bucket,
+    qdrant,
+    embedder,
+    ocr_reader,
+):
+    """Curate one financial document image: OCR, chunk, embed, write to S3 and Qdrant.
+
+    Args: staging key, split name, S3 endpoint URL, staging bucket, curated bucket, Qdrant client, embedder, OCR reader.
+    Returns: metadata dict describing the outcome for this file.
+    """
     s3 = get_thread_s3(endpoint_url)
 
     entry = {"file": file, "split": split}
@@ -245,11 +330,9 @@ def _process_financial_file(file, split, endpoint_url, staging_bucket, curated_b
         text = " ".join(ocr_result).strip()
 
         if not text:
-            entry.update({
-                "document_id": document_id,
-                "label": label,
-                "status": "ocr_empty"
-            })
+            entry.update(
+                {"document_id": document_id, "label": label, "status": "ocr_empty"}
+            )
             return entry
 
         chunks = chunk_text(text)
@@ -259,7 +342,7 @@ def _process_financial_file(file, split, endpoint_url, staging_bucket, curated_b
             "document_id": document_id,
             "label": label,
             "split": split,
-            "file": file
+            "file": file,
         }
 
         n_chunks = upsert_chunks(
@@ -271,40 +354,56 @@ def _process_financial_file(file, split, endpoint_url, staging_bucket, curated_b
         s3.put_object(
             Bucket=curated_bucket,
             Key=destination,
-            Body=json.dumps({
-                "document_id": document_id,
-                "label": label,
-                "split": split,
-                "source_file": file,
-                "text": text,
-                "chunk_count": n_chunks
-            }, indent=2).encode("utf-8")
+            Body=json.dumps(
+                {
+                    "document_id": document_id,
+                    "label": label,
+                    "split": split,
+                    "source_file": file,
+                    "text": text,
+                    "chunk_count": n_chunks,
+                },
+                indent=2,
+            ).encode("utf-8"),
         )
 
-        entry.update({
-            "document_id": document_id,
-            "label": label,
-            "curated_path": destination,
-            "chunk_count": n_chunks,
-            "status": "curated"
-        })
+        entry.update(
+            {
+                "document_id": document_id,
+                "label": label,
+                "curated_path": destination,
+                "chunk_count": n_chunks,
+                "status": "curated",
+            }
+        )
 
     except Exception as exc:
-        entry.update({
-            "status": "error",
-            "error": str(exc)
-        })
+        entry.update({"status": "error", "error": str(exc)})
 
     return entry
 
 
-def process_financial_curated(endpoint_url, staging_bucket, curated_bucket, qdrant, embedder, ocr_reader, limit=None, workers=DEFAULT_WORKERS):
+def process_financial_curated(
+    endpoint_url,
+    staging_bucket,
+    curated_bucket,
+    qdrant,
+    embedder,
+    ocr_reader,
+    limit=None,
+    workers=DEFAULT_WORKERS,
+):
+    """Curate financial document images from staging, split by split, in parallel.
+
+    Args: S3 endpoint URL, staging bucket, curated bucket, Qdrant client, embedder, OCR reader, max files per split, thread count.
+    Returns: list of metadata entries, one per processed file.
+    """
     s3 = get_thread_s3(endpoint_url)
 
     prefixes = [
         "financial/train/images/",
         "financial/validation/images/",
-        "financial/test/images/"
+        "financial/test/images/",
     ]
 
     metadata = []
@@ -320,31 +419,64 @@ def process_financial_curated(endpoint_url, staging_bucket, curated_bucket, qdra
         with ThreadPoolExecutor(max_workers=workers) as executor:
             futures = [
                 executor.submit(
-                    _process_financial_file, file, split, endpoint_url, staging_bucket,
-                    curated_bucket, qdrant, embedder, ocr_reader
+                    _process_financial_file,
+                    file,
+                    split,
+                    endpoint_url,
+                    staging_bucket,
+                    curated_bucket,
+                    qdrant,
+                    embedder,
+                    ocr_reader,
                 )
                 for file in files
             ]
 
-            for future in tqdm(as_completed(futures), total=len(futures), desc=f"financial curated ({split})"):
+            for future in tqdm(
+                as_completed(futures),
+                total=len(futures),
+                desc=f"financial curated ({split})",
+            ):
                 metadata.append(future.result())
 
-    merge_and_write_metadata(s3, curated_bucket, "financial/metadata.json", metadata, id_field="file")
+    merge_and_write_metadata(
+        s3, curated_bucket, "financial/metadata.json", metadata, id_field="file"
+    )
 
     return metadata
 
 
 def main():
+    """CLI entry point: curate SEC filings and/or financial images.
+
+    Args: none, reads CLI flags.
+    Returns: none.
+    """
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--endpoint-url", default="http://localhost:4566")
     parser.add_argument("--qdrant-url", default="http://localhost:6333")
     parser.add_argument("--staging-bucket", default="staging")
     parser.add_argument("--curated-bucket", default="curated")
-    parser.add_argument("--limit", type=int, default=None, help="Limit number of files per source, for testing")
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Limit number of files per source, for testing",
+    )
     parser.add_argument("--only", choices=["sec", "financial"], default=None)
-    parser.add_argument("--sec-workers", type=int, default=6, help="Concurrent threads for SEC (I/O-bound: S3 + HTML parse + embed)")
-    parser.add_argument("--financial-workers", type=int, default=3, help="Concurrent threads for financial OCR (CPU-bound: EasyOCR contends beyond ~3 threads)")
+    parser.add_argument(
+        "--sec-workers",
+        type=int,
+        default=6,
+        help="Concurrent threads for SEC (I/O-bound: S3 + HTML parse + embed)",
+    )
+    parser.add_argument(
+        "--financial-workers",
+        type=int,
+        default=3,
+        help="Concurrent threads for financial OCR (CPU-bound: EasyOCR contends beyond ~3 threads)",
+    )
 
     args = parser.parse_args()
 
@@ -356,20 +488,33 @@ def main():
     ensure_collection(qdrant, "financial_documents")
 
     from sentence_transformers import SentenceTransformer
+
     embedder = SentenceTransformer(EMBEDDING_MODEL_NAME)
 
     if args.only != "financial":
         process_sec_curated(
-            args.endpoint_url, args.staging_bucket, args.curated_bucket, qdrant, embedder,
-            limit=args.limit, workers=args.sec_workers
+            args.endpoint_url,
+            args.staging_bucket,
+            args.curated_bucket,
+            qdrant,
+            embedder,
+            limit=args.limit,
+            workers=args.sec_workers,
         )
 
     if args.only != "sec":
         import easyocr
+
         ocr_reader = easyocr.Reader(["en"], gpu=False)
         process_financial_curated(
-            args.endpoint_url, args.staging_bucket, args.curated_bucket, qdrant, embedder, ocr_reader,
-            limit=args.limit, workers=args.financial_workers
+            args.endpoint_url,
+            args.staging_bucket,
+            args.curated_bucket,
+            qdrant,
+            embedder,
+            ocr_reader,
+            limit=args.limit,
+            workers=args.financial_workers,
         )
 
     print("STAGING -> CURATED terminé")

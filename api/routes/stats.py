@@ -1,3 +1,5 @@
+"""Stats route: object counts and vector counts across the data lake."""
+
 from fastapi import APIRouter
 
 from api.clients import get_qdrant_client, get_s3_client
@@ -7,6 +9,11 @@ router = APIRouter(tags=["stats"])
 
 
 def bucket_stats(s3, bucket):
+    """Count objects and total size in a bucket.
+
+    Args: s3 client, bucket name.
+    Returns: dict with object count, total size, and status.
+    """
     paginator = s3.get_paginator("list_objects_v2")
 
     count = 0
@@ -25,12 +32,17 @@ def bucket_stats(s3, bucket):
 
 @router.get("/stats")
 def stats():
+    """Report volume metrics for every bucket and vector collection.
+
+    Args: none.
+    Returns: dict with per-bucket stats and per-collection point counts.
+    """
     s3 = get_s3_client()
 
     buckets = {
         "raw": bucket_stats(s3, RAW_BUCKET),
         "staging": bucket_stats(s3, STAGING_BUCKET),
-        "curated": bucket_stats(s3, CURATED_BUCKET)
+        "curated": bucket_stats(s3, CURATED_BUCKET),
     }
 
     vector_store = {}

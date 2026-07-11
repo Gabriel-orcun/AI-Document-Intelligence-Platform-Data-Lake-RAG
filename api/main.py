@@ -1,3 +1,5 @@
+"""API Gateway entry point, wires up all routers."""
+
 from fastapi import FastAPI
 
 from api.routes import curated, health, raw, staging, stats

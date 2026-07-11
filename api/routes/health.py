@@ -1,3 +1,5 @@
+"""Health check route, pings S3 and Qdrant."""
+
 from fastapi import APIRouter
 from botocore.exceptions import ClientError
 
@@ -9,11 +11,20 @@ router = APIRouter(tags=["health"])
 
 @router.get("/health")
 def health():
+    """Check that S3 buckets and Qdrant are reachable.
+
+    Args: none.
+    Returns: dict with overall status and per-service status.
+    """
     services = {}
 
     s3 = get_s3_client()
 
-    for name, bucket in [("s3_raw", RAW_BUCKET), ("s3_staging", STAGING_BUCKET), ("s3_curated", CURATED_BUCKET)]:
+    for name, bucket in [
+        ("s3_raw", RAW_BUCKET),
+        ("s3_staging", STAGING_BUCKET),
+        ("s3_curated", CURATED_BUCKET),
+    ]:
         try:
             s3.head_bucket(Bucket=bucket)
             services[name] = "up"
@@ -26,6 +37,8 @@ def health():
     except Exception:
         services["qdrant"] = "down"
 
-    status = "healthy" if all(state == "up" for state in services.values()) else "degraded"
+    status = (
+        "healthy" if all(state == "up" for state in services.values()) else "degraded"
+    )
 
     return {"status": status, "services": services}

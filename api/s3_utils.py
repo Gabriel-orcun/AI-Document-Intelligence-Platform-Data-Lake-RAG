@@ -1,8 +1,15 @@
+"""Shared S3 listing and object-fetch helpers used by the API routes."""
+
 from botocore.exceptions import ClientError
 from fastapi import HTTPException, Response
 
 
 def list_objects(s3, bucket, prefix="", limit=50, continuation_token=None):
+    """List objects in a bucket, one page at a time.
+
+    Args: s3 client, bucket name, key prefix, page size, pagination token.
+    Returns: dict with the object list and a token for the next page.
+    """
     kwargs = {"Bucket": bucket, "Prefix": prefix, "MaxKeys": limit}
 
     if continuation_token:
@@ -17,7 +24,7 @@ def list_objects(s3, bucket, prefix="", limit=50, continuation_token=None):
         {
             "key": obj["Key"],
             "size_bytes": obj["Size"],
-            "last_modified": obj["LastModified"].isoformat()
+            "last_modified": obj["LastModified"].isoformat(),
         }
         for obj in response.get("Contents", [])
     ]
@@ -28,18 +35,25 @@ def list_objects(s3, bucket, prefix="", limit=50, continuation_token=None):
         "count": len(objects),
         "objects": objects,
         "is_truncated": response.get("IsTruncated", False),
-        "next_token": response.get("NextContinuationToken")
+        "next_token": response.get("NextContinuationToken"),
     }
 
 
 def get_object_response(s3, bucket, key):
+    """Fetch one object and wrap it as an HTTP response.
+
+    Args: s3 client, bucket name, object key.
+    Returns: FastAPI Response with the object bytes, or raises 404/502.
+    """
     try:
         obj = s3.get_object(Bucket=bucket, Key=key)
     except ClientError as exc:
         error_code = exc.response.get("Error", {}).get("Code")
 
         if error_code in ("NoSuchKey", "404"):
-            raise HTTPException(status_code=404, detail=f"'{key}' not found in bucket '{bucket}'")
+            raise HTTPException(
+                status_code=404, detail=f"'{key}' not found in bucket '{bucket}'"
+            )
 
         raise HTTPException(status_code=502, detail=str(exc))
 

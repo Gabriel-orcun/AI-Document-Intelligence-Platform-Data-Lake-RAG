@@ -1,3 +1,5 @@
+"""Environment-driven configuration shared by all API routes."""
+
 import os
 
 S3_ENDPOINT_URL = os.getenv("S3_ENDPOINT_URL", "http://localhost:4566")
