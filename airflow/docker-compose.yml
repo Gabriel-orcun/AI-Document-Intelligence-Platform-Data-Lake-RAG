@@ -19,10 +19,6 @@ services:
       - RAW_BUCKET=raw
       - STAGING_BUCKET=staging
       - CURATED_BUCKET=curated
-      # Demo sample (80 images) by default: the full Kaggle dataset (1600 images)
-      # takes hours of EasyOCR and previously OOM-killed this container. Point
-      # FINANCIAL_SOURCE_DIR at data/financial/images and unset FINANCIAL_CURATED_LIMIT
-      # only if you really want the full run (see README "Pipeline complet").
       - FINANCIAL_SOURCE_DIR=/opt/airflow/repo/prof/data_demo
       - FINANCIAL_CURATED_LIMIT=100
     volumes:
