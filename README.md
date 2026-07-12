@@ -2,7 +2,7 @@
 
 ## 1. But du projet
 
-Le projet ingère deux sources hétérogènes — un dataset d'images de documents financiers (Kaggle)
+Le projet ingère deux sources hétérogènes — un dataset d'images de documents financiers (Kaggle https://www.kaggle.com/datasets/swatigupta555/financial-document-classification)
 et les filings 10-K de la SEC (API SEC EDGAR) — les fait transiter par un pipeline
 raw → staging → curated, et indexe le contenu curé dans une base vectorielle pour bâtir un
 système RAG (Retrieval-Augmented Generation) interrogeable via une API.
@@ -46,10 +46,10 @@ système RAG (Retrieval-Augmented Generation) interrogeable via une API.
 
 **Sources de données**
 
-| Source                                 | Type             | Contenu                                                                                                                         |
-| -------------------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| Dataset Kaggle de documents financiers | Fichier (images) | ~1600 images, 16 classes (invoice, budget, resume, handwritten, ...). Échantillon de 80 images versionné dans `prof/data_demo/` |
-| [SEC EDGAR](https://www.sec.gov/edgar) | API              | Filings 10-K (rapports annuels) au format HTML                                                                                  |
+| Source                                                                                                                    | Type             | Contenu                                                                                                                         |
+| ------------------------------------------------------------------------------------------------------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Dataset Kaggle de documents [financiers](https://www.kaggle.com/datasets/swatigupta555/financial-document-classification) | Fichier (images) | ~1600 images, 16 classes (invoice, budget, resume, handwritten, ...). Échantillon de 80 images versionné dans `prof/data_demo/` |
+| [SEC EDGAR](https://www.sec.gov/edgar)                                                                                    | API              | Filings 10-K (rapports annuels) au format HTML                                                                                  |
 
 ## 2. Lancer le projet
 
